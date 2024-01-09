@@ -3,4 +3,5 @@ Path and packages
 https://firmware-selector.openwrt.org/?version=22.03.2&target=mediatek%2Fmt7622&id=linksys_e8450-ubi
 
 opkg update
-opkg install adguardhome prometheus-node-exporter-lua wireguard-tools luci-app-wireguard luci-app-sqm luci luci-app-pbr pbr luci-mod-rpc vim curl 
+opkg install adguardhome prometheus-node-exporter-lua wireguard-tools luci-app-wireguard luci-app-sqm luci  luci-app-pbr pbr luci-mod-rpc \
+vim curl ddns-scripts-cloudflare luci-app-ddns qrencode luci-proto-wireguard
