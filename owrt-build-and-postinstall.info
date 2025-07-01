@@ -1,7 +1,12 @@
 Path and packages
 
-https://firmware-selector.openwrt.org/?version=22.03.2&target=mediatek%2Fmt7622&id=linksys_e8450-ubi
+https://firmware-selector.openwrt.org/?version=24.10.1&target=bcm27xx%2Fbcm2712&id=rpi-5
 
 opkg update
-opkg install adguardhome prometheus-node-exporter-lua wireguard-tools luci-app-wireguard luci-app-sqm luci  luci-app-pbr pbr luci-mod-rpc \
-vim curl ddns-scripts-cloudflare luci-app-ddns qrencode luci-proto-wireguard
+opkg install adguardhome wireguard-tools luci-app-sqm luci  luci-app-pbr pbr luci-mod-rpc vim curl ddns-scripts-cloudflare luci-app-ddns qrencode luci-proto-wireguard jq luci-app-cloudflared luci-app-attendedsysupgrade luci-app-statistics collectd-mod-thermal luci-app-nlbwmon kmod-r8169 bcp38 kmod-usb-core block-mount kmod-fs-ext4 kmod-usb-storage-extras e2fsprogs blkid fdisk prometheus-node-exporter-lua prometheus-node-exporter-lua-hwmon prometheus-node-exporter-lua-openwrt prometheus-node-exporter-lua-thermal
+
+
+Pi5 kmod-r8169
+
+Pi4
+kmod-usb-net-asix-ax88179
