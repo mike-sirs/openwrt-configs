@@ -1,9 +1,9 @@
 Path and packages
 
-https://firmware-selector.openwrt.org/?version=24.10.1&target=bcm27xx%2Fbcm2712&id=rpi-5
+https://firmware-selector.openwrt.org/?version=25.12.2&target=bcm27xx%2Fbcm2712&id=rpi-5
 
-opkg update
-opkg install adguardhome wireguard-tools luci-app-sqm luci  luci-app-pbr pbr luci-mod-rpc vim curl ddns-scripts-cloudflare luci-app-ddns qrencode luci-proto-wireguard jq luci-app-cloudflared luci-app-attendedsysupgrade luci-app-statistics collectd-mod-thermal luci-app-nlbwmon kmod-r8169 bcp38 kmod-usb-core block-mount kmod-fs-ext4 kmod-usb-storage-extras e2fsprogs blkid fdisk prometheus-node-exporter-lua prometheus-node-exporter-lua-hwmon prometheus-node-exporter-lua-openwrt prometheus-node-exporter-lua-thermal
+apk update
+apk install adguardhome wireguard-tools luci-app-sqm luci  luci-app-pbr pbr luci-mod-rpc vim curl ddns-scripts-cloudflare luci-app-ddns qrencode luci-proto-wireguard jq luci-app-cloudflared  luci-app-statistics collectd-mod-thermal luci-app-nlbwmon kmod-r8169 bcp38 kmod-usb-core block-mount kmod-fs-ext4 kmod-usb-storage-extras e2fsprogs blkid fdisk prometheus-node-exporter-lua prometheus-node-exporter-lua-hwmon prometheus-node-exporter-lua-openwrt prometheus-node-exporter-lua-thermal avahi-dbus-daemon luci-app-openvpn odhcpd-ipv6only
 
 
 Pi5 kmod-r8169
