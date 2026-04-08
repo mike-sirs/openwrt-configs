@@ -76,9 +76,10 @@ update_server() {
 
         echo "Restarting WireGuard interface (${WG_INTERFACE})..."
         # Restart the interface to apply the new settings.
-        ifdown "${WG_INTERFACE}" && ifup "${WG_INTERFACE}"
-
+        ubus call "network.interface.${WG_INTERFACE}" down && ubus call "network.interface.${WG_INTERFACE}" up
+        #sleep 5
         echo "Update complete."
+	#/etc/init.d/pbr restart
     else
         echo "Recommended server is the same as the current one. No action taken."
     fi
