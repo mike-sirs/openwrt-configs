@@ -1,122 +1,97 @@
-#!/bin/ash
-#
-# This script intelligently manages your NordVPN WireGuard connection on OpenWrt.
-#
-# It periodically checks the load of the current NordVPN server. If the load
-# exceeds the configured maximum, or if the server is decommissioned, it
-# automatically fetches the best recommended server from the NordVPN API
-# and updates the OpenWrt network configuration.
-#
-# Crontab setup to run every 30 minutes:
-# */30 * * * * /path/to/this/nordvpn_updater.sh
-#
+#!/bin/sh
+# NordVPN WireGuard endpoint updater for OpenWrt.
+# Logs via syslog (read with `logread -e nordvpn-updater`).
 
-# --- Script Configuration ---
-set -o pipefail # The return value of a pipeline is the status of the last command to exit with a non-zero status.
-set -o nounset  # Treat unset variables as an error.
-set -o errexit  # Exit immediately if a command exits with a non-zero status.
+set -u
 
-# --- User Configuration ---
-readonly WG_INTERFACE="wg0" # The name of your WireGuard interface in OpenWrt.
-readonly MAX_SERVER_LOAD=20 # The maximum desired server load percentage.
-readonly NORDVPN_API_BASE_URL="https://api.nordvpn.com/v1"
+readonly WG_INTERFACE="${WG_INTERFACE:-wg0}"
+readonly MAX_SERVER_LOAD="${MAX_SERVER_LOAD:-20}"
+readonly COUNTRY_ID="${COUNTRY_ID:-}"   # e.g. 202 for Switzerland; empty = any
+readonly API="https://api.nordvpn.com/v1"
+readonly LOCK="/var/lock/nordvpn-updater.lock"
+readonly TAG="nordvpn-updater"
 
-# --- Helper Functions ---
+log()  { logger -s -t "$TAG" -- "$*"; }
+die()  { log "ERROR: $*"; exit 1; }
 
-# Finds the uci configuration section for the WireGuard peer.
-# On OpenWrt, this is typically the first section of type "wireguard_{interface_name}".
+# Single-instance lock.
+exec 9>"$LOCK" || die "cannot open lock file"
+flock -n 9 || { log "another instance is running; exit"; exit 0; }
+
+api_get() {
+    curl -fsS --max-time 15 --retry 2 --retry-delay 3 \
+         -A "openwrt-$TAG/1.1" -G "$@"
+}
+
 get_peer_section() {
-    local peer_type="wireguard_${WG_INTERFACE}"
-    local peer_section
-
-    # Find the section name (e.g., network.@wireguard_wg0[0]) for the peer.
-    peer_section=$(uci show network | grep "=${peer_type}" | head -n 1 | cut -d'=' -f1)
-
-    if [ -z "${peer_section}" ]; then
-        echo "Error: Could not find a WireGuard peer section of type '${peer_type}'." >&2
-        echo "Please check your '/etc/config/network' file and the WG_INTERFACE variable." >&2
-        return 1
-    fi
-
-    echo "${peer_section}"
+    uci -q show network \
+        | grep -E "=wireguard_${WG_INTERFACE}\$" \
+        | head -n1 | cut -d= -f1
 }
 
-# Fetches the best recommended server and updates the configuration.
-update_server() {
-    local wg_peer
-    wg_peer=$(get_peer_section) || return 1
-
-    # Get the single best recommended WireGuard server from the API.
-    local rec_srv_json
-    rec_srv_json=$(curl -s -G --data-urlencode "filters[servers_technologies][identifier]=wireguard_udp" --data-urlencode "limit=1" "${NORDVPN_API_BASE_URL}/servers/recommendations")
-
-    # Exit if the API response is empty or not a valid JSON array.
-    if ! echo "${rec_srv_json}" | jq -e '.[0]' > /dev/null; then
-        echo "Error: Failed to get a valid recommendation from NordVPN API." >&2
-        return 1
-    fi
-
-    # Parse the JSON to get the new server's hostname and public key.
-    local rec_srv_addr
-    rec_srv_addr=$(echo "${rec_srv_json}" | jq -r '.[0].hostname')
-
-    local rec_srv_pubkey
-    rec_srv_pubkey=$(echo "${rec_srv_json}" | jq -r '.[0].technologies[] | select(.identifier == "wireguard_udp") | .metadata[] | select(.name == "public_key") | .value')
-
-    local current_host
-    current_host=$(uci get "${wg_peer}.endpoint_host")
-
-    if [ "${current_host}" != "${rec_srv_addr}" ]; then
-        echo "New recommended server: ${rec_srv_addr}. Updating configuration."
-
-        # Use 'uci' to safely update the peer configuration.
-        uci set "${wg_peer}.endpoint_host=${rec_srv_addr}"
-        uci set "${wg_peer}.public_key=${rec_srv_pubkey}"
-        uci commit network
-
-        echo "Restarting WireGuard interface (${WG_INTERFACE})..."
-        # Restart the interface to apply the new settings.
-        ubus call "network.interface.${WG_INTERFACE}" down && ubus call "network.interface.${WG_INTERFACE}" up
-        #sleep 5
-        echo "Update complete."
-	#/etc/init.d/pbr restart
-    else
-        echo "Recommended server is the same as the current one. No action taken."
-    fi
+fetch_recommendation() {
+    set -- --data-urlencode "filters[servers_technologies][identifier]=wireguard_udp" \
+           --data-urlencode "limit=1"
+    [ -n "$COUNTRY_ID" ] && set -- "$@" --data-urlencode "filters[country_id]=$COUNTRY_ID"
+    api_get "$@" "$API/servers/recommendations"
 }
 
-# --- Main Logic ---
 main() {
-    local wg_peer
-    wg_peer=$(get_peer_section) || exit 1
+    local wg_peer cur_host srv_json load needs_update=0
+    local new_host new_pubkey
 
-    local current_host
-    current_host=$(uci get "${wg_peer}.endpoint_host")
+    wg_peer=$(get_peer_section)
+    [ -n "$wg_peer" ] || die "no WireGuard peer section for ${WG_INTERFACE}"
 
-    # Fetch details for the current server using the robust --data-urlencode method.
-    local server_details
-    server_details=$(curl -s -G --data-urlencode "filters[hostname]=${current_host}" "${NORDVPN_API_BASE_URL}/servers")
+    cur_host=$(uci -q get "${wg_peer}.endpoint_host") \
+        || die "endpoint_host not set on ${wg_peer}"
 
-    # The API returns an empty array '[]' for unknown or decommissioned servers.
-    if [ "${server_details}" = "[]" ]; then
-        echo "Warning: Current server ${current_host} not found in API. It might be decommissioned."
-        # Set a high load to force an update to a new server.
-        local current_load=101
+    srv_json=$(api_get --data-urlencode "filters[hostname]=${cur_host}" "$API/servers") \
+        || { log "API unreachable; skip this run"; exit 0; }
+
+    if [ "$srv_json" = "[]" ]; then
+        log "current server ${cur_host} not in API (decommissioned?)"
+        needs_update=1
     else
-        local current_load
-        current_load=$(echo "${server_details}" | jq -r '.[0].load')
+        load=$(printf '%s' "$srv_json" | jq -r '.[0].load // 101')
+        log "current ${cur_host} load=${load}% max=${MAX_SERVER_LOAD}%"
+        [ "$load" -gt "$MAX_SERVER_LOAD" ] && needs_update=1
     fi
 
-    echo "Current server: ${current_host} | Current load: ${current_load}% | Max load: ${MAX_SERVER_LOAD}%"
+    [ "$needs_update" -eq 1 ] || { log "load OK, no action"; exit 0; }
 
-    # Use '-gt' for numeric "greater than" comparison.
-    if [ "${current_load}" -gt "${MAX_SERVER_LOAD}" ]; then
-        echo "Server load is too high or server is offline. Finding a better server..."
-        update_server
-    else
-        echo "Server load is acceptable. Nothing to do."
+    rec_json=$(fetch_recommendation) || die "recommendation API failed"
+    # Parse hostname + public key in one jq pass.
+    parsed=$(printf '%s' "$rec_json" | jq -r '
+        .[0] | [
+          .hostname,
+          (.technologies[]
+             | select(.identifier=="wireguard_udp")
+             | .metadata[]
+             | select(.name=="public_key")
+             | .value)
+        ] | @tsv') || die "jq parse error"
+    new_host=$(printf '%s' "$parsed" | cut -f1)
+    new_pubkey=$(printf '%s' "$parsed" | cut -f2)
+
+    [ -n "$new_host" ] && [ -n "$new_pubkey" ] || die "empty hostname/pubkey"
+
+    if [ "$cur_host" = "$new_host" ]; then
+        log "recommended server unchanged ($cur_host); skip"
+        exit 0
     fi
+
+    log "switching ${cur_host} -> ${new_host}"
+    if ! { uci set "${wg_peer}.endpoint_host=${new_host}" \
+        && uci set "${wg_peer}.public_key=${new_pubkey}" \
+        && uci commit network; }
+    then
+        uci -q revert network
+        die "uci update failed; reverted"
+    fi
+
+    ifup "$WG_INTERFACE" || log "ifup returned non-zero (continuing)"
+    log "done"
 }
 
-# --- Script Entrypoint ---
-main
+main "$@"
